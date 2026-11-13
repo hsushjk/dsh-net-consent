@@ -1,0 +1,13 @@
+- insert:
+    - id: net-consent
+      name: dsh-net-consent
+      config:
+        mode: ask
+        shellMode: ask
+        allowLocal: true
+        askTimeoutMs: 30000
+        onTimeout: deny
+        audit: true
+        auditRetentionDays: 30
+        purposes: true
+        allowlist: []
