@@ -25,6 +25,14 @@
     "consent"
   ],
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hsushjk/dsh-net-consent.git"
+  },
+  "homepage": "https://github.com/hsushjk/dsh-net-consent#readme",
+  "bugs": {
+    "url": "https://github.com/hsushjk/dsh-net-consent/issues"
+  },
   "engines": {
     "node": ">=20"
   },
