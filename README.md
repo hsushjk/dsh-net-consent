@@ -53,6 +53,10 @@
 
 白名单是显式例外表，先于 `deny` 策略生效。
 
+## 安全
+
+设置页的状态接口挂在 DSH 的 `/api` 通道上（`ctx.connection.fetch.register` 的精确路由）。Host / Origin 校验与浏览器认证由 DSH 自己完成，只有已认证的属主会话能读写；插件不再向 `webServer` 注册裸路由。
+
 ## 配置
 
 `cordis.patch.yml` 里 `net-consent` 行的 `config:`：

@@ -4,7 +4,7 @@ import { join } from 'node:path'
 
 export const name = 'net-consent'
 
-export const inject = ['tools', 'userQuestions', 'webServer']
+export const inject = ['tools', 'userQuestions']
 
 const STATE_DIR = join(homedir(), '.dsh', 'net-consent')
 const STATE_FILE = join(STATE_DIR, 'state.json')
@@ -272,22 +272,6 @@ const VERSION_PROMISE = readFile(new URL('./package.json', import.meta.url), 'ut
   })
   .catch(() => '')
 
-function readJsonBody(req, limit = 64 * 1024) {
-  return new Promise((resolve, reject) => {
-    let size = 0
-    const chunks = []
-    req.on('data', chunk => {
-      size += chunk.length
-      if (size > limit) { req.destroy(); reject(new Error('body too large')); return }
-      chunks.push(chunk)
-    })
-    req.on('end', () => {
-      try { resolve(chunks.length ? JSON.parse(Buffer.concat(chunks).toString('utf8')) : {}) } catch (error) { reject(error) }
-    })
-    req.on('error', reject)
-  })
-}
-
 export const _test = {
   classify, hostsIn, isPrivateHost, purposeOf, DEFAULTS, normalizePolicy,
   allowlisted, isHostEntry, hostAllowed, toolMatches, commandMatches, migrate,
@@ -496,7 +480,10 @@ export function apply(ctx, config) {
   }
 
   const ROUTE_KEY = Symbol.for('dsh-net-consent.routes')
-  const ROUTE_BASE = '/net-consent'
+  // Mounted on Connection's shared /api channel, so DSH itself applies its
+  // Host/Origin fence and browser authentication before this handler runs, and
+  // only the authenticated owner Peer reaches it.
+  const ROUTE_PATH = '/api/net-consent/state'
 
   const writeDebug = async (line) => {
     try {
@@ -505,21 +492,19 @@ export function apply(ctx, config) {
     } catch {  }
   }
 
-  const routeHandler = async (req, res) => {
-    const url = new URL(req.url ?? '/', 'http://localhost')
-    const send = (status, payload) => {
-      const body = JSON.stringify(payload)
-      res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
-      res.end(body)
-    }
-    if (url.pathname !== `${ROUTE_BASE}/state`) return send(404, { error: 'not found' })
+  const jsonResponse = (status, payload) => Response.json(payload, {
+    status,
+    headers: { 'cache-control': 'no-store' },
+  })
+
+  const routeFetch = async (request) => {
     await ready
 
-    if (req.method === 'GET' || req.method === 'HEAD') return send(200, snapshot())
+    if (request.method === 'GET' || request.method === 'HEAD') return jsonResponse(200, snapshot())
 
-    if (req.method === 'POST') {
+    if (request.method === 'POST') {
       let patch
-      try { patch = await readJsonBody(req) } catch { return send(400, { error: 'bad json' }) }
+      try { patch = await request.json() } catch { return jsonResponse(400, { error: 'bad json' }) }
       const next = {}
       for (const key of WRITABLE) if (key in (patch ?? {})) next[key] = patch[key]
       for (const key of ['mode', 'shellMode']) {
@@ -553,28 +538,34 @@ export function apply(ctx, config) {
       stored = { ...stored, ...next }
       const ok = await saveState(stored)
       void pruneAudit(cfg().auditRetentionDays)
-      return send(ok ? 200 : 500, { ...snapshot(), saved: ok })
+      return jsonResponse(ok ? 200 : 500, { ...snapshot(), saved: ok })
     }
-    return send(405, { error: 'method not allowed' })
+    return jsonResponse(405, { error: 'method not allowed' })
   }
 
   try {
     const previous = globalThis[ROUTE_KEY]
     if (Array.isArray(previous)) {
-      for (const dispose of previous) { try { dispose() } catch {  } }
+      for (const dispose of previous) { try { void Promise.resolve(dispose()).catch(() => {}) } catch {  } }
     }
-    const registered = []
-    if (typeof ctx.webServer?.register === 'function') {
-      registered.push(ctx.webServer.register({ kind: 'exact', path: `${ROUTE_BASE}/state`, handler: routeHandler }))
-      registered.push(ctx.webServer.register({ kind: 'prefix', path: ROUTE_BASE, handler: routeHandler }))
-      globalThis[ROUTE_KEY] = registered
-      void writeDebug(`routes registered: ${ROUTE_BASE}/state (exact) + ${ROUTE_BASE} (prefix)`)
-      ctx.on('dispose', () => {
-        for (const dispose of registered) { try { dispose() } catch {  } }
-        if (globalThis[ROUTE_KEY] === registered) globalThis[ROUTE_KEY] = undefined
+    if (typeof ctx.inject === 'function') {
+      ctx.inject(['connection'], (connectionCtx) => {
+        const dispose = connectionCtx.connection.fetch.register({
+          path: ROUTE_PATH,
+          methods: ['GET', 'HEAD', 'POST'],
+          requestBody: 'buffered',
+          fetch: routeFetch,
+        })
+        globalThis[ROUTE_KEY] = [dispose]
+        void writeDebug(`route registered: ${ROUTE_PATH} (connection.fetch exact)`)
+        connectionCtx.on('dispose', () => {
+          if (globalThis[ROUTE_KEY] === undefined) return
+          if (globalThis[ROUTE_KEY][0] !== dispose) return
+          globalThis[ROUTE_KEY] = undefined
+        })
       })
     } else {
-      void writeDebug(`route skipped: typeof webServer=${typeof ctx.webServer} typeof register=${typeof ctx.webServer?.register}`)
+      void writeDebug('route skipped: ctx.inject unavailable')
     }
   } catch (error) {
     void writeDebug(`route registration failed: ${error?.stack ?? String(error)}`)

@@ -5,7 +5,7 @@ window.__ModuleLoader__.load({
     const h = React.createElement
     const { useState, useEffect, useCallback } = React
 
-    const STATE_URL = '/net-consent/state'
+    const STATE_URL = '/api/net-consent/state'
 
     const store = {
       value: null,
